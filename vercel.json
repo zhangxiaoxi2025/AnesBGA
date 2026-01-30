@@ -9,7 +9,7 @@
   "devCommand": "cd frontend && npm run dev",
   "regions": ["iad1"],
   "functions": {
-    "api/**/*.py": {
+    "api/*.py": {
       "runtime": "python3.9",
       "maxDuration": 30
     }
@@ -17,7 +17,7 @@
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "/api/main.py"
+      "dest": "/api/main"
     },
     {
       "src": "/assets/(.*)",
@@ -27,12 +27,6 @@
       "src": "/(.*)",
       "dest": "/frontend/dist/index.html",
       "check": true
-    }
-  ],
-  "rewrites": [
-    {
-      "source": "/api/:match*",
-      "destination": "/api/main.py"
     }
   ],
   "env": {

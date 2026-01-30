@@ -2,7 +2,7 @@ import { useState } from 'react'
 import './App.css'
 
 // API基础URL - Vercel 部署时使用相对路径
-const API_BASE_URL = import.meta.env.PROD ? '/api' : 'http://localhost:8000'
+const API_BASE_URL = import.meta.env.PROD ? '' : 'http://localhost:8000'
 
 function App() {
   const [step, setStep] = useState<'upload' | 'review' | 'input' | 'result'>('upload')
