@@ -176,6 +176,138 @@ async def analyze_with_gemini(blood_gas_data: dict, weight: Optional[float] = No
         "disclaimer": "以上分析基于AI算法，仅供临床参考。具体治疗方案必须由具有执业资格的主治医生根据患者整体情况决定。本系统不承担任何医疗责任。"
     }
 
+# ============ OCR 识别函数 ============
+
+OCR_PROMPT = """你是专业的血气分析报告 OCR 识别系统。
+
+【重要规则 - 违反将导致严重后果】
+1. 严禁捏造：看不清、被遮挡或不存在的指标必须返回 null，不准凭空猜测数字
+2. 禁止推算：只提取肉眼可见的数值，不准用公式推算任何指标
+3. 宁缺毋滥：宁可返回 null，也不准编造数据
+
+【必须识别的 18 个指标清单】
+请提取以下指标（如果图中没有或看不清，返回 null）：
+
+| 序号 | 字段名 | 中文名 | 正常范围参考 |
+|------|--------|--------|--------------|
+| 1 | ph | pH值 | 7.35-7.45 |
+| 2 | po2 | 氧分压 (mmHg) | 80-100 |
+| 3 | pco2 | 二氧化碳分压 (mmHg) | 35-45 |
+| 4 | na | 钠 Na+ (mmol/L) | 135-145 |
+| 5 | k | 钾 K+ (mmol/L) | 3.5-5.5 |
+| 6 | ca | 离子钙 Ca++ (mmol/L) | 1.10-1.35 |
+| 7 | glu | 葡萄糖 GLU (mmol/L) | 3.9-6.1 |
+| 8 | lac | 乳酸 LAC (mmol/L) | 0.5-2.2 |
+| 9 | hct | 红细胞压积 HCT (%) | 35-50 |
+| 10 | ca_74 | 校正钙 Ca++7.4 (mmol/L) | 1.10-1.35 |
+| 11 | hco3_act | 碳酸氢盐 HCO3- (mmol/L) | 22-27 |
+| 12 | hco3_std | 标准碳酸氢盐 HCO3s (mmol/L) | 22-27 |
+| 13 | ctco2 | 总二氧化碳 ctCO2 (mmol/L) | 23-28 |
+| 14 | be_ecf | 细胞外液碱剩余 BEecf (mmol/L) | -2~+2 |
+| 15 | be_b | 剩余碱 BE(B) (mmol/L) | -2~+2 |
+| 16 | so2c | 氧饱和度 SO2c (%) | 95-100 |
+| 17 | thbc | 总血红蛋白 THbc (g/L) | 120-175 |
+| 18 | temp | 体温 Temp (°C) | 36.0-37.5 |
+
+【返回格式要求】
+只返回纯 JSON 对象，不要任何 markdown 标记：
+
+{
+  "ph": 数值或null,
+  "po2": 数值或null,
+  "pco2": 数值或null,
+  "na": 数值或null,
+  "k": 数值或null,
+  "ca": 数值或null,
+  "glu": 数值或null,
+  "lac": 数值或null,
+  "hct": 数值或null,
+  "ca_74": 数值或null,
+  "hco3_act": 数值或null,
+  "hco3_std": 数值或null,
+  "ctco2": 数值或null,
+  "be_ecf": 数值或null,
+  "be_b": 数值或null,
+  "so2c": 数值或null,
+  "thbc": 数值或null,
+  "temp": 数值或null,
+  "missing_fields": ["字段名1", "字段名2"]  // 识别不到或看不清的字段列表
+}
+
+【重要】missing_fields 必须列出所有识别不到或被遮挡的字段名，即使你返回了部分数据。
+"""
+
+async def ocr_with_gemini(image_bytes: bytes) -> dict:
+    """使用 Gemini Vision API 识别血气报告"""
+    import httpx
+
+    # 从环境变量读取 API Key
+    api_key = os.environ.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY 环境变量未设置")
+
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+
+    # 将图片转为 base64
+    image = Image.open(io.BytesIO(image_bytes))
+    buffered = io.BytesIO()
+    image_format = image.format if image.format else 'JPEG'
+    image.save(buffered, format=image_format, quality=95)
+    img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+
+    # MIME 类型
+    if image_format == 'JPEG':
+        mime_type = 'image/jpeg'
+    elif image_format == 'PNG':
+        mime_type = 'image/png'
+    else:
+        mime_type = 'image/jpeg'
+
+    # 调用 Gemini Vision API
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": OCR_PROMPT},
+                {
+                    "inline_data": {
+                        "mime_type": mime_type,
+                        "data": img_base64
+                    }
+                }
+            ]
+        }],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 2048
+        }
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(api_url, json=payload, timeout=60.0)
+        response.raise_for_status()
+        result = response.json()
+
+    # 解析响应
+    if result.get("candidates") and result["candidates"][0].get("content"):
+        result_text = result["candidates"][0]["content"]["parts"][0]["text"]
+        # 清理可能的 markdown 格式
+        result_text = result_text.strip()
+        if result_text.startswith("```json"):
+            result_text = result_text[7:]
+        if result_text.startswith("```"):
+            result_text = result_text[3:]
+        if result_text.endswith("```"):
+            result_text = result_text[:-3]
+        result_text = result_text.strip()
+
+        ocr_result = json.loads(result_text)
+        ocr_result["extracted_at"] = datetime.utcnow().isoformat()
+        return ocr_result
+
+    raise ValueError("OCR 识别失败：API 返回无效响应")
+
 # ============ API 端点 ============
 
 @app.get("/")
@@ -187,6 +319,52 @@ async def root():
 async def health_check():
     """健康检查"""
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+
+@app.post("/api/v1/ocr")
+async def ocr_blood_gas(file: UploadFile = File(...), weight: Optional[str] = Form(None)):
+    """
+    OCR 识别血气报告图片
+
+    参数：
+        - file: 血气报告图片文件（必需）
+        - weight: 患者体重（可选，用于药量计算）
+    """
+    try:
+        # 读取图片文件
+        image_bytes = await file.read()
+
+        # 检查文件大小（最大 10MB）
+        if len(image_bytes) > 10 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="图片文件大小不能超过 10MB"
+            )
+
+        # 检查文件类型
+        if not file.content_type in ["image/jpeg", "image/jpg", "image/png"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="只支持 JPG/PNG 格式的图片"
+            )
+
+        # 调用 OCR
+        ocr_result = await ocr_with_gemini(image_bytes)
+
+        return {
+            "success": True,
+            "ocr_result": ocr_result
+        }
+
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"OCR 结果解析失败：{str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"OCR 识别失败：{str(e)}"
+        )
 
 @app.post("/api/v1/analyze")
 async def analyze_blood_gas(
