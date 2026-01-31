@@ -42,9 +42,196 @@ class BloodGasAnalysisResponse(BaseModel):
     electrolyte_correction: Optional[dict] = None
     safety_warning: Optional[str] = None
 
-# ============ 简单的 AI 分析函数 ============
+# ============ AI 分析函数 ============
 
-async def analyze_with_gemini(blood_gas_data: dict, weight: Optional[float] = None) -> dict:
+ANALYSIS_SYSTEM_PROMPT = """你是**资深主任麻醉医师**，拥有30年围术期管理经验。
+
+【你的职责】
+基于血气分析18项指标、患者体重和生命体征，给出**量化、具体、可执行**的临床建议。
+
+{'【重要】患者体重: {weight} kg' if '{weight}' else '【注意】患者体重未提供，无法进行精确药量计算，请提示用户补充'}
+
+----
+
+## 一、酸碱平衡纠正
+
+### A. 代谢性酸中毒 (pH < 7.35 且 BE < -3)
+**计算公式**: NaHCO3 (mmol) = |BE| × weight × 0.3
+**5%碳酸氢钠**: 1ml = 0.6mmol NaHCO3
+
+**量化建议**:
+- 计算所需NaHCO3 mmol数
+- 换算为5%碳酸氢钠ml数
+- 建议"首次给半量，根据血气复查调整"
+
+### B. 代谢性碱中毒 (pH > 7.45)
+**类型判断**:
+- HCO3-升高为主 → 代谢性碱中毒
+- PaCO2升高为主 → 呼吸性碱中毒代偿
+
+**处理建议**:
+- 结合Cl-水平：Cl- < 98 → 生理盐水补液
+- 结合K+水平：K+ < 3.5 → 补钾治疗
+- 呼吸机参数调整（如适用）
+
+----
+
+## 二、贫血与输血指导
+
+**目标值**: THbc ≥ 100 g/L（或根据手术风险调整70-100）
+**红细胞悬液**: 1U ≈ 提升Hb 5-10 g/L
+
+**量化计算**:
+- 需要提升: max(0, 100 - 当前THbc) g/L
+- 估算红细胞悬液: 向上取整(需要提升 / 7) U
+
+----
+
+## 三、电解质纠正
+
+### K+ 补钾
+- 正常范围: 3.5-5.5 mmol/L
+- 公式: 所需K+ (mmol) = (目标差值) × 体重(kg) × 0.3
+- KCl规格: 1g KCl ≈ 13.4 mmol K+
+
+### Ca++ 补钙
+- 正常范围: 1.10-1.35 mmol/L
+- 葡萄糖酸钙: 1g ≈ 2.2 mmol Ca++
+
+----
+
+## 四、输出格式要求
+
+只返回JSON，结构如下：
+
+{{{{
+  "assessment": {{
+    "acid_base_status": "酸碱状态描述",
+    "primary_disorder": "原发性紊乱类型",
+    "compensation_status": "代偿状态",
+    "severity": "轻度/中度/重度",
+    "oxygenation": "氧合状态",
+    "risk_level": "低风险/中风险/高风险",
+    "clinical_summary": "一句话临床总结"
+  }},
+  "acid_correction": {{
+    "condition": "满足条件描述或不满足",
+    "be_value": BE值,
+    "calculated_na_hco3_mmol": 计算的NaHCO3 mmol数,
+    "nahco3_5_percent_ml": 5%碳酸氢钠ml数,
+    "recommendation": "首次半量给药建议",
+    "formula_used": "NaHCO3 (mmol) = |BE| × weight × 0.3",
+    "weight_used": 体重,
+    "calculation_basis": "计算依据描述"
+  }},
+  "alkalosis_management": {{
+    "condition": "满足条件描述或不满足",
+    "type": "代谢性/呼吸性/混合性",
+    "cl_level": Cl-值,
+    "k_level": K+值,
+    "fluid_therapy": "补液建议",
+    "ventilation_adjustment": "呼吸机参数建议（如适用）"
+  }},
+  "transfusion_guidance": {{
+    "condition": "满足条件描述或不满足",
+    "current_thbc": 当前THbc值,
+    "target_thbc": 目标值,
+    "hemoglobin_deficit": 血红蛋白缺口,
+    "prbc_units_estimated": 估算红细胞悬液U数,
+    "clinical_reminders": ["临床提醒列表"]
+  }},
+  "electrolyte_correction": {{
+    "potassium": {{
+      "current_k": 当前K+值,
+      "normal_range": "3.5-5.5",
+      "deficit": 缺口值,
+      "kcl_recommendation": "KCl补液建议（ml或g）",
+      "formula": "所需K+ (mmol) = (目标-当前) × 体重 × 0.3"
+    }},
+    "calcium": {{
+      "current_ca": 当前Ca++值,
+      "normal_range": "1.10-1.35",
+      "deficit": 缺口值,
+      "calcium_recommendation": "补钙建议（葡萄糖酸钙ml或g）"
+    }}
+  }},
+  "findings": [
+    {{
+      "category": "酸碱平衡/氧合/通气/电解质/血液学",
+      "parameter": "指标名称",
+      "value": 数值,
+      "reference": "正常范围",
+      "deviation": "偏离程度",
+      "interpretation": "临床意义",
+      "severity": "normal/mild/moderate/severe"
+    }}
+  ],
+  "recommendations": [
+    {{
+      "priority": "高/中/低",
+      "category": "治疗/监测/预防",
+      "action": "具体措施",
+      "detail": "详细说明（含剂量、时间、目标值）",
+      "rationale": "医学依据"
+    }}
+  ],
+  "alerts": [
+    {{
+      "level": "警告/注意/信息",
+      "message": "警告信息",
+      "recommendation": "建议措施"
+    }}
+  ],
+  "safety_warning": "临床医师需根据实际失血量及循环波动动态调整",
+  "disclaimer": "以上分析基于AI算法，仅供临床参考。具体治疗方案必须由具有执业资格的主治医生根据患者整体情况决定。本系统不承担任何医疗责任。"
+}}}}
+
+----
+
+## 五、重要规则
+
+1. **公式透明**: 所有计算必须说明计算依据
+2. **缺失处理**: 如果没有体重，在酸碱纠正建议首行提示"请补充患者体重以获取精准药量计算"
+3. **安全警示**: 所有计算结果后必须附带"临床医师需根据实际失血量及循环波动动态调整"
+4. **数据驱动**: 所有建议必须有数据支撑
+5. **宁缺毋滥**: 无法计算时返回null或提示，不准编造
+
+只返回JSON，不要任何其他内容。"""
+
+
+def _format_blood_gas(data: dict) -> str:
+    """格式化血气数据"""
+    fields = [
+        ("pH", "ph"), ("PO2", "po2"), ("PCO2", "pco2"), ("Na+", "na"),
+        ("K+", "k"), ("Ca++", "ca"), ("GLU", "glu"), ("LAC", "lac"),
+        ("HCT", "hct"), ("HCO3-", "hco3_act"), ("BEecf", "be_ecf"),
+        ("THbc", "thbc")
+    ]
+    return "\n".join([f"- **{name}**: {data.get(field, 'N/A')}" for name, field in fields if data.get(field) is not None])
+
+
+def _format_vital_signs(data: dict) -> str:
+    """格式化生命体征"""
+    if not data:
+        return "未提供"
+    return f"""- 收缩压: {data.get('blood_pressure_systolic', 'N/A')} mmHg
+- 舒张压: {data.get('blood_pressure_diastolic', 'N/A')} mmHg
+- 心率: {data.get('heart_rate', 'N/A')} bpm
+- SpO2: {data.get('spo2', 'N/A')}%"""
+
+
+def _format_anesthesia(data: dict) -> str:
+    """格式化麻醉参数"""
+    if not data:
+        return "未提供"
+    return f"""- 麻醉方式: {data.get('anesthesia_type', 'N/A')}
+- 气管插管: {data.get('intubated', 'N/A')}
+- 用药: {data.get('medications', 'N/A')}"""
+
+
+async def analyze_with_gemini(blood_gas_data: dict, weight: Optional[float] = None,
+                               vital_signs: Optional[dict] = None,
+                               anesthesia: Optional[dict] = None) -> dict:
     """使用 Gemini API 分析血气数据"""
     import httpx
 
@@ -55,126 +242,88 @@ async def analyze_with_gemini(blood_gas_data: dict, weight: Optional[float] = No
 
     model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
-    # 计算 BE 值用于酸中毒判断
-    ph = blood_gas_data.get("ph", 7.4)
-    pco2 = blood_gas_data.get("pco2", 40)
-    hco3 = blood_gas_data.get("hco3_act", 24)
-    be_ecf = blood_gas_data.get("be_ecf", 0)
-    po2 = blood_gas_data.get("po2", 100)
+    # 构造系统提示词（替换体重占位符）
+    system_prompt = ANALYSIS_SYSTEM_PROMPT.replace("{weight}", str(weight) if weight else "未提供")
 
-    # 判断酸碱状态
-    if ph < 7.35:
-        acid_base_status = "代谢性酸中毒"
-        severity = "重度" if ph < 7.2 else "中度" if ph < 7.35 else "轻度"
-        primary_disorder = "原发性代谢性酸中毒"
-    elif ph > 7.45:
-        acid_base_status = "代谢性碱中毒"
-        severity = "轻度"
-        primary_disorder = "原发性代谢性碱中毒"
-    else:
-        acid_base_status = "酸碱平衡正常"
-        severity = "正常"
-        primary_disorder = "无"
+    # 构建用户提示词
+    user_prompt = f"""请分析以下患者数据：
 
-    # 判断氧合状态
-    if po2 < 80:
-        oxygenation = "低氧血症"
-    elif po2 < 100:
-        oxygenation = "轻度低氧"
-    else:
-        oxygenation = "正常"
+## 血气分析18项指标
+{_format_blood_gas(blood_gas_data)}
 
-    # 计算风险等级
-    if ph < 7.2:
-        risk_level = "高风险"
-    elif ph < 7.35 or ph > 7.45:
-        risk_level = "中风险"
-    else:
-        risk_level = "低风险"
+## 生命体征
+{_format_vital_signs(vital_signs)}
 
-    # 生成临床总结
-    clinical_summary = f"pH {ph:.2f}，{acid_base_status}，{oxygenation}，{risk_level}。"
+## 麻醉参数
+{_format_anesthesia(anesthesia)}
 
-    # 计算酸中毒纠正（如果有 BE 值）
-    acid_correction = None
-    if ph < 7.35 and be_ecf and weight:
-        abs_be = abs(be_ecf)
-        nahco3_mmol = abs_be * weight * 0.3
-        nahco3_ml = nahco3_mmol / 0.6  # 5% NaHCO3 = 0.6mmol/ml
-        acid_correction = {
-            "condition": f"代谢性酸中毒（pH {ph:.2f}，BE {be_ecf}）",
-            "be_value": be_ecf,
-            "calculated_na_hco3_mmol": round(nahco3_mmol, 1),
-            "nahco3_5_percent_ml": round(nahco3_ml, 1),
-            "recommendation": "首次给半量（{} ml），根据血气复查调整".format(round(nahco3_ml / 2, 1)),
-            "formula_used": "NaHCO3 (mmol) = |BE| × weight × 0.3",
-            "weight_used": weight,
-            "calculation_basis": f"基于BE值为{be_ecf}，体重{weight}kg"
-        }
+## 患者体重
+{weight} kg {'(可用于精确药量计算)' if weight else '(未提供，无法进行精确药量计算)'}
 
-    # 生成 findings
-    findings = []
-    if ph < 7.35:
-        findings.append({
-            "category": "酸碱平衡",
-            "parameter": "pH",
-            "value": ph,
-            "reference": "7.35-7.45",
-            "deviation": "↓",
-            "interpretation": "酸中毒",
-            "severity": "severe"
-        })
-    if be_ecf and be_ecf < -3:
-        findings.append({
-            "category": "酸碱平衡",
-            "parameter": "BEecf",
-            "value": be_ecf,
-            "reference": "-2~+2",
-            "deviation": "↓",
-            "interpretation": "代谢性酸中毒",
-            "severity": "moderate"
-        })
+---
 
-    # 生成 recommendations
-    recommendations = []
-    if ph < 7.35 and acid_correction:
-        recommendations.append({
-            "priority": "高",
-            "category": "治疗",
-            "action": "纠正代谢性酸中毒",
-            "detail": "建议输注 5% 碳酸氢钠 {} ml，首次半量给药".format(round(acid_correction["nahco3_5_percent_ml"] / 2, 1)),
-            "rationale": "基于 BE 值和体重的量化计算"
-        })
+请按照上述系统提示词的格式，返回完整的JSON分析结果。
 
-    # 生成 alerts
-    alerts = []
-    if ph < 7.2:
-        alerts.append({
-            "level": "警告",
-            "message": "严重酸中毒 (pH < 7.2)，需立即处理",
-            "recommendation": "考虑碳酸氢钠纠正，密切监测血气变化"
-        })
+只返回JSON，不要任何其他内容。"""
 
-    return {
-        "assessment": {
-            "acid_base_status": acid_base_status,
-            "primary_disorder": primary_disorder,
-            "compensation_status": "代偿不足",
-            "severity": severity,
-            "oxygenation": oxygenation,
-            "risk_level": risk_level,
-            "clinical_summary": clinical_summary
-        },
-        "findings": findings,
-        "recommendations": recommendations,
-        "alerts": alerts,
-        "acid_correction": acid_correction,
-        "alkalosis_management": None,
-        "transfusion_guidance": None,
-        "electrolyte_correction": None,
-        "safety_warning": "临床医师需根据实际失血量及循环波动动态调整",
-        "disclaimer": "以上分析基于AI算法，仅供临床参考。具体治疗方案必须由具有执业资格的主治医生根据患者整体情况决定。本系统不承担任何医疗责任。"
-    }
+    # 调用 Gemini API
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+
+    request_body = {{
+        "contents": [{{"parts": [{{"text": user_prompt}}]}}],
+        "system_instruction": {{
+            "parts": [{{"text": system_prompt}}]
+        }},
+        "generationConfig": {{
+            "temperature": 0.3,
+            "maxOutputTokens": 16384,
+            "responseMimeType": "application/json"
+        }}
+    }}
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        response = await client.post(
+            api_url,
+            json=request_body,
+            headers={{"Content-Type": "application/json"}}
+        )
+
+    if response.status_code != 200:
+        raise ValueError(f"API调用失败 ({response.status_code}): {response.text}")
+
+    response_data = response.json()
+
+    # 检查错误
+    if "error" in response_data:
+        raise ValueError(f"Gemini API错误: {response_data['error']['message']}")
+
+    # 提取文本内容
+    result_text = ""
+    if response_data.get("candidates"):
+        candidate = response_data["candidates"][0]
+        if "content" in candidate and "parts" in candidate["content"]:
+            for part in candidate["content"]["parts"]:
+                if "text" in part:
+                    result_text = part["text"]
+                    break
+
+    # 去掉markdown代码块标记
+    result_text = result_text.strip()
+    if result_text.startswith("```json"):
+        result_text = result_text[7:]
+    elif result_text.startswith("```"):
+        result_text = result_text[3:]
+    if result_text.endswith("```"):
+        result_text = result_text[:-3]
+    result_text = result_text.strip()
+
+    # 解析JSON
+    try:
+        analysis_result = json.loads(result_text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"JSON解析失败: {{str(e)}}，原始响应: {{result_text[:500]}}")
+
+    return analysis_result
 
 # ============ OCR 识别函数 ============
 
@@ -385,6 +534,8 @@ async def analyze_blood_gas(
     try:
         # 解析JSON数据
         blood_gas_data = json.loads(blood_gas_json) if blood_gas_json else {}
+        vital_signs_data = json.loads(vital_signs_json) if vital_signs_json else None
+        anesthesia_data = json.loads(anesthesia_json) if anesthesia_json else None
         weight_value = float(weight) if weight else None
 
         # 检查是否至少有血气数据
@@ -394,8 +545,8 @@ async def analyze_blood_gas(
                 detail="必须提供血气数据"
             )
 
-        # 调用 AI 分析
-        result = await analyze_with_gemini(blood_gas_data, weight_value)
+        # 调用 AI 分析（传递所有参数）
+        result = await analyze_with_gemini(blood_gas_data, weight_value, vital_signs_data, anesthesia_data)
 
         # 构造响应
         return BloodGasAnalysisResponse(
