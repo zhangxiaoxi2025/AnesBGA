@@ -258,7 +258,7 @@ async def analyze_with_gemini(blood_gas_data: dict, weight: Optional[float] = No
 {_format_anesthesia(anesthesia)}
 
 ## 患者体重
-{weight} kg {'(可用于精确药量计算)' if weight else '(未提供，无法进行精确药量计算)'}
+{f"{weight} kg (可用于精确药量计算)" if weight else "未提供，无法进行精确药量计算"}
 
 ---
 
