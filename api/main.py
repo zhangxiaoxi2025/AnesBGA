@@ -12,7 +12,8 @@ import base64
 import io
 from PIL import Image
 
-# 创建 FastAPI 应用
+# Vercel ASGI 适配器 - 直接导出 app
+# Vercel 会自动用 ASGI 服务器运行这个 app
 app = FastAPI(title="AnesGuardian API")
 
 # 允许跨域（Vercel 前端）
@@ -245,8 +246,5 @@ async def analyze_blood_gas(
             detail=f"分析出错：{str(e)}"
         )
 
-# Vercel ASGI 适配器
-from fastapi.middleware.wsgi import WSGIMiddleware
-from vercel_wsgi import handle
-
-handler = WSGIMiddleware(handle(app))
+# Vercel 直接运行 FastAPI，不需要 WSGI 适配器
+# 导出 app 对象供 Vercel 使用
