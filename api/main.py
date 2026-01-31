@@ -85,7 +85,7 @@ async def analyze_with_gemini(blood_gas_data: dict, weight: Optional[float] = No
         raise ValueError("GEMINI_API_KEY 环境变量未设置")
 
     # 使用更快的模型
-    model = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
     # 格式化血气数据
     bg_parts = []
