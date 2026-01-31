@@ -269,23 +269,23 @@ async def analyze_with_gemini(blood_gas_data: dict, weight: Optional[float] = No
     # 调用 Gemini API
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
-    request_body = {{
-        "contents": [{{"parts": [{{"text": user_prompt}}]}}],
-        "system_instruction": {{
-            "parts": [{{"text": system_prompt}}]
-        }},
-        "generationConfig": {{
+    request_body = {
+        "contents": [{"parts": [{"text": user_prompt}]}],
+        "system_instruction": {
+            "parts": [{"text": system_prompt}]
+        },
+        "generationConfig": {
             "temperature": 0.3,
             "maxOutputTokens": 16384,
             "responseMimeType": "application/json"
-        }}
-    }}
+        }
+    }
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(
             api_url,
             json=request_body,
-            headers={{"Content-Type": "application/json"}}
+            headers={"Content-Type": "application/json"}
         )
 
     if response.status_code != 200:
@@ -321,7 +321,7 @@ async def analyze_with_gemini(blood_gas_data: dict, weight: Optional[float] = No
     try:
         analysis_result = json.loads(result_text)
     except json.JSONDecodeError as e:
-        raise ValueError(f"JSON解析失败: {{str(e)}}，原始响应: {{result_text[:500]}}")
+        raise ValueError(f"JSON解析失败: {str(e)}，原始响应: {result_text[:500]}")
 
     return analysis_result
 
