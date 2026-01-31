@@ -121,6 +121,10 @@ async def analyze_with_gemini(blood_gas_data: dict, weight: Optional[float] = No
             headers={{"Content-Type": "application/json"}}
         )
 
+    # 检查频率限制
+    if response.status_code == 429:
+        raise ValueError("请求过于频繁，请稍后再试（Gemini API 频率限制）")
+
     if response.status_code != 200:
         raise ValueError(f"API调用失败 ({response.status_code}): {response.text}")
 
@@ -268,8 +272,13 @@ async def ocr_with_gemini(image_bytes: bytes) -> dict:
 
     async with httpx.AsyncClient() as client:
         response = await client.post(api_url, json=payload, timeout=60.0)
-        response.raise_for_status()
-        result = response.json()
+
+    # 检查频率限制
+    if response.status_code == 429:
+        raise ValueError("请求过于频繁，请稍后再试（Gemini API 频率限制）")
+
+    response.raise_for_status()
+    result = response.json()
 
     # 解析响应
     if result.get("candidates") and result["candidates"][0].get("content"):
