@@ -13,23 +13,18 @@
       "maxDuration": 30
     }
   },
-  "routes": [
+  "rewrites": [
     {
-      "src": "/api/(.*)",
-      "dest": "/api/main"
+      "source": "/api/(.*)",
+      "destination": "/api/main"
     },
     {
-      "src": "/assets/(.*)",
-      "dest": "/frontend/dist/assets/$1"
+      "source": "/assets/(.*)",
+      "destination": "/frontend/dist/assets/$1"
     },
     {
-      "src": "/(.*)",
-      "dest": "/frontend/dist/index.html",
-      "check": true
+      "source": "/(.*)",
+      "destination": "/frontend/dist/index.html"
     }
-  ],
-  "env": {
-    "GEMINI_API_KEY": "@gemini-api-key",
-    "GEMINI_MODEL": "gemini-2.5-flash"
-  }
+  ]
 }
