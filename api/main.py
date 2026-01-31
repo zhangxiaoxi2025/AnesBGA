@@ -44,189 +44,33 @@ class BloodGasAnalysisResponse(BaseModel):
 
 # ============ AI 分析函数 ============
 
-ANALYSIS_SYSTEM_PROMPT = """你是**资深主任麻醉医师**，拥有30年围术期管理经验。
+ANALYSIS_SYSTEM_PROMPT = """你是资深麻醉医师，分析血气数据并给出量化建议。
 
-【你的职责】
-基于血气分析18项指标、患者体重和生命体征，给出**量化、具体、可执行**的临床建议。
-
-{'【重要】患者体重: {weight} kg' if '{weight}' else '【注意】患者体重未提供，无法进行精确药量计算，请提示用户补充'}
-
-----
-
-## 一、酸碱平衡纠正
-
-### A. 代谢性酸中毒 (pH < 7.35 且 BE < -3)
-**计算公式**: NaHCO3 (mmol) = |BE| × weight × 0.3
-**5%碳酸氢钠**: 1ml = 0.6mmol NaHCO3
-
-**量化建议**:
-- 计算所需NaHCO3 mmol数
-- 换算为5%碳酸氢钠ml数
-- 建议"首次给半量，根据血气复查调整"
-
-### B. 代谢性碱中毒 (pH > 7.45)
-**类型判断**:
-- HCO3-升高为主 → 代谢性碱中毒
-- PaCO2升高为主 → 呼吸性碱中毒代偿
-
-**处理建议**:
-- 结合Cl-水平：Cl- < 98 → 生理盐水补液
-- 结合K+水平：K+ < 3.5 → 补钾治疗
-- 呼吸机参数调整（如适用）
-
-----
-
-## 二、贫血与输血指导
-
-**目标值**: THbc ≥ 100 g/L（或根据手术风险调整70-100）
-**红细胞悬液**: 1U ≈ 提升Hb 5-10 g/L
-
-**量化计算**:
-- 需要提升: max(0, 100 - 当前THbc) g/L
-- 估算红细胞悬液: 向上取整(需要提升 / 7) U
-
-----
-
-## 三、电解质纠正
-
-### K+ 补钾
-- 正常范围: 3.5-5.5 mmol/L
-- 公式: 所需K+ (mmol) = (目标差值) × 体重(kg) × 0.3
-- KCl规格: 1g KCl ≈ 13.4 mmol K+
-
-### Ca++ 补钙
-- 正常范围: 1.10-1.35 mmol/L
-- 葡萄糖酸钙: 1g ≈ 2.2 mmol Ca++
-
-----
-
-## 四、输出格式要求
-
-只返回JSON，结构如下：
-
+【输出格式】只返回JSON：
 {{{{
   "assessment": {{
-    "acid_base_status": "酸碱状态描述",
-    "primary_disorder": "原发性紊乱类型",
-    "compensation_status": "代偿状态",
-    "severity": "轻度/中度/重度",
-    "oxygenation": "氧合状态",
-    "risk_level": "低风险/中风险/高风险",
-    "clinical_summary": "一句话临床总结"
+    "acid_base_status": "酸碱状态",
+    "severity": "轻/中/重/正常",
+    "oxygenation": "正常/低氧/轻度低氧",
+    "risk_level": "低/中/高风险",
+    "clinical_summary": "一句话总结"
   }},
   "acid_correction": {{
-    "condition": "满足条件描述或不满足",
-    "be_value": BE值,
-    "calculated_na_hco3_mmol": 计算的NaHCO3 mmol数,
-    "nahco3_5_percent_ml": 5%碳酸氢钠ml数,
-    "recommendation": "首次半量给药建议",
-    "formula_used": "NaHCO3 (mmol) = |BE| × weight × 0.3",
-    "weight_used": 体重,
-    "calculation_basis": "计算依据描述"
+    "condition": "代谢性酸中毒（pH {...}，BE {...}）",
+    "nahco3_5_percent_ml": NaHCO3毫升数,
+    "recommendation": "首次半量给药"
   }},
-  "alkalosis_management": {{
-    "condition": "满足条件描述或不满足",
-    "type": "代谢性/呼吸性/混合性",
-    "cl_level": Cl-值,
-    "k_level": K+值,
-    "fluid_therapy": "补液建议",
-    "ventilation_adjustment": "呼吸机参数建议（如适用）"
-  }},
-  "transfusion_guidance": {{
-    "condition": "满足条件描述或不满足",
-    "current_thbc": 当前THbc值,
-    "target_thbc": 目标值,
-    "hemoglobin_deficit": 血红蛋白缺口,
-    "prbc_units_estimated": 估算红细胞悬液U数,
-    "clinical_reminders": ["临床提醒列表"]
-  }},
-  "electrolyte_correction": {{
-    "potassium": {{
-      "current_k": 当前K+值,
-      "normal_range": "3.5-5.5",
-      "deficit": 缺口值,
-      "kcl_recommendation": "KCl补液建议（ml或g）",
-      "formula": "所需K+ (mmol) = (目标-当前) × 体重 × 0.3"
-    }},
-    "calcium": {{
-      "current_ca": 当前Ca++值,
-      "normal_range": "1.10-1.35",
-      "deficit": 缺口值,
-      "calcium_recommendation": "补钙建议（葡萄糖酸钙ml或g）"
-    }}
-  }},
-  "findings": [
-    {{
-      "category": "酸碱平衡/氧合/通气/电解质/血液学",
-      "parameter": "指标名称",
-      "value": 数值,
-      "reference": "正常范围",
-      "deviation": "偏离程度",
-      "interpretation": "临床意义",
-      "severity": "normal/mild/moderate/severe"
-    }}
-  ],
-  "recommendations": [
-    {{
-      "priority": "高/中/低",
-      "category": "治疗/监测/预防",
-      "action": "具体措施",
-      "detail": "详细说明（含剂量、时间、目标值）",
-      "rationale": "医学依据"
-    }}
-  ],
-  "alerts": [
-    {{
-      "level": "警告/注意/信息",
-      "message": "警告信息",
-      "recommendation": "建议措施"
-    }}
-  ],
-  "safety_warning": "临床医师需根据实际失血量及循环波动动态调整",
-  "disclaimer": "以上分析基于AI算法，仅供临床参考。具体治疗方案必须由具有执业资格的主治医生根据患者整体情况决定。本系统不承担任何医疗责任。"
+  "findings": [{{"category":"酸碱平衡", "parameter":"pH", "value":...}}],
+  "recommendations": [{{"priority":"高/中/低", "action":"具体措施", "detail":"剂量和时间"}}],
+  "alerts": [{{"level":"警告", "message":"严重酸中毒"}}],
+  "safety_warning": "需根据实际循环波动动态调整"
 }}}}
 
-----
+【计算规则】
+- 代谢性酸中毒：NaHCO3(ml) = |BE| × 体重 × 0.3 / 0.6
+- 首次给半量，复查后调整
 
-## 五、重要规则
-
-1. **公式透明**: 所有计算必须说明计算依据
-2. **缺失处理**: 如果没有体重，在酸碱纠正建议首行提示"请补充患者体重以获取精准药量计算"
-3. **安全警示**: 所有计算结果后必须附带"临床医师需根据实际失血量及循环波动动态调整"
-4. **数据驱动**: 所有建议必须有数据支撑
-5. **宁缺毋滥**: 无法计算时返回null或提示，不准编造
-
-只返回JSON，不要任何其他内容。"""
-
-
-def _format_blood_gas(data: dict) -> str:
-    """格式化血气数据"""
-    fields = [
-        ("pH", "ph"), ("PO2", "po2"), ("PCO2", "pco2"), ("Na+", "na"),
-        ("K+", "k"), ("Ca++", "ca"), ("GLU", "glu"), ("LAC", "lac"),
-        ("HCT", "hct"), ("HCO3-", "hco3_act"), ("BEecf", "be_ecf"),
-        ("THbc", "thbc")
-    ]
-    return "\n".join([f"- **{name}**: {data.get(field, 'N/A')}" for name, field in fields if data.get(field) is not None])
-
-
-def _format_vital_signs(data: dict) -> str:
-    """格式化生命体征"""
-    if not data:
-        return "未提供"
-    return f"""- 收缩压: {data.get('blood_pressure_systolic', 'N/A')} mmHg
-- 舒张压: {data.get('blood_pressure_diastolic', 'N/A')} mmHg
-- 心率: {data.get('heart_rate', 'N/A')} bpm
-- SpO2: {data.get('spo2', 'N/A')}%"""
-
-
-def _format_anesthesia(data: dict) -> str:
-    """格式化麻醉参数"""
-    if not data:
-        return "未提供"
-    return f"""- 麻醉方式: {data.get('anesthesia_type', 'N/A')}
-- 气管插管: {data.get('intubated', 'N/A')}
-- 用药: {data.get('medications', 'N/A')}"""
+只返回JSON。"""
 
 
 async def analyze_with_gemini(blood_gas_data: dict, weight: Optional[float] = None,
@@ -240,52 +84,41 @@ async def analyze_with_gemini(blood_gas_data: dict, weight: Optional[float] = No
     if not api_key:
         raise ValueError("GEMINI_API_KEY 环境变量未设置")
 
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    # 使用更快的模型
+    model = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
 
-    # 构造系统提示词（替换体重占位符）
-    system_prompt = ANALYSIS_SYSTEM_PROMPT.replace("{weight}", str(weight) if weight else "未提供")
+    # 格式化血气数据
+    bg_parts = []
+    for name, field in [("pH", "ph"), ("PO2", "po2"), ("PCO2", "pco2"), ("Na+", "na"),
+                        ("K+", "k"), ("HCO3-", "hco3_act"), ("BEecf", "be_ecf"), ("THbc", "thbc")]:
+        val = blood_gas_data.get(field)
+        if val is not None:
+            bg_parts.append(f"{name}: {val}")
 
-    # 构建用户提示词
-    user_prompt = f"""请分析以下患者数据：
-
-## 血气分析18项指标
-{_format_blood_gas(blood_gas_data)}
-
-## 生命体征
-{_format_vital_signs(vital_signs)}
-
-## 麻醉参数
-{_format_anesthesia(anesthesia)}
-
-## 患者体重
-{f"{weight} kg (可用于精确药量计算)" if weight else "未提供，无法进行精确药量计算"}
-
----
-
-请按照上述系统提示词的格式，返回完整的JSON分析结果。
-
-只返回JSON，不要任何其他内容。"""
+    user_prompt = f"""血气数据: {', '.join(bg_parts) if bg_parts else '数据不完整'}
+体重: {weight}kg{'（可用）' if weight else '（未提供）'}
+请按格式返回JSON分析结果。"""
 
     # 调用 Gemini API
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
-    request_body = {
-        "contents": [{"parts": [{"text": user_prompt}]}],
-        "system_instruction": {
-            "parts": [{"text": system_prompt}]
-        },
-        "generationConfig": {
-            "temperature": 0.3,
-            "maxOutputTokens": 16384,
+    request_body = {{
+        "contents": [{{"parts": [{{"text": user_prompt}}]}}],
+        "system_instruction": {{
+            "parts": [{{"text": ANALYSIS_SYSTEM_PROMPT}}]
+        }},
+        "generationConfig": {{
+            "temperature": 0.2,
+            "maxOutputTokens": 2048,
             "responseMimeType": "application/json"
-        }
-    }
+        }}
+    }}
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
             api_url,
             json=request_body,
-            headers={"Content-Type": "application/json"}
+            headers={{"Content-Type": "application/json"}}
         )
 
     if response.status_code != 200:
